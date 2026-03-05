@@ -69,3 +69,9 @@ class AuthenticationException(GlanceException):
     
     def __init__(self, message: str = "Invalid API key"):
         super().__init__(message, status_code=401)
+
+class SearchServiceException(GlanceException):
+    """Exception for search service errors."""
+    
+    def __init__(self, message: str = "Search service error"):
+        super().__init__(message, status_code=503)

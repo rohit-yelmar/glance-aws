@@ -142,12 +142,6 @@ class SearchService:
             raise SearchServiceException(f"Search failed: {str(e)}")
 
 
-# Custom exception
-class SearchServiceException(Exception):
-    """Exception for search service errors."""
-    pass
-
-
 # Singleton instance
 _search_service = None
 
