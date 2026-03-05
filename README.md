@@ -25,11 +25,11 @@ AI-powered visual semantic search system for fashion e-commerce platforms. Enabl
                             │
             ┌───────────────┴───────────────┐
             ▼                               ▼
-   ┌─────────────────┐           ┌──────────────────┐
-   │  Amazon RDS     │           │  Amazon          │
-   │  (PostgreSQL)   │           │  OpenSearch      │
-   │  Product Store  │           │  (Vector DB)     │
-   └─────────────────┘           └──────────────────┘
+    ┌─────────────────┐           ┌──────────────────┐
+    │  Amazon RDS     │           │    Pinecone      │
+    │  (PostgreSQL)   │           │  (Vector DB)     │
+    │  Product Store  │           │  Serverless      │
+    └─────────────────┘           └──────────────────┘
 ```
 
 ---
@@ -59,7 +59,7 @@ cp .env.example .env
 
 # Initialize databases
 python scripts/init_db.py
-python scripts/init_opensearch.py
+python scripts/init_pinecone.py
 
 # Run development server
 uvicorn app.main:app --reload
@@ -120,7 +120,7 @@ curl -X POST http://localhost:8000/search \
 
 - **Framework**: FastAPI (Python)
 - **Database**: Amazon RDS (PostgreSQL)
-- **Vector DB**: Amazon OpenSearch
+- **Vector DB**: Pinecone (Serverless)
 - **AI Models**: Amazon Nova 2 Lite, Nova Multimodal Embeddings
 - **AWS SDK**: boto3
 - **Deployment**: Amazon EC2
@@ -134,7 +134,7 @@ glance-aws/
 ├── app/
 │   ├── api/           # API routes (catalog, search, health)
 │   ├── services/      # Business logic (Bedrock, embeddings, search)
-│   ├── db/            # Database clients (RDS, OpenSearch)
+│   ├── db/            # Database clients (RDS, Pinecone)
 │   ├── utils/         # Utilities (image, text, RRF)
 │   └── main.py        # FastAPI entry point
 ├── scripts/           # Setup and initialization scripts
@@ -153,7 +153,7 @@ glance-aws/
 2. **Image Analysis**: Nova 2 Lite extracts material, style, vibe attributes
 3. **Text Combination**: Merge original + AI-generated attributes
 4. **Embedding Generation**: Create 1024-dim vectors for text + image
-5. **Vector Storage**: Store in OpenSearch with metadata
+5. **Vector Storage**: Store in Pinecone with metadata (text-embeddings and image-embeddings namespaces)
 
 ## Retrieval Flow
 
@@ -168,7 +168,8 @@ glance-aws/
 ## Deployment
 
 See [`setup.md`](setup.md) for complete deployment instructions including:
-- AWS service configuration (RDS, OpenSearch, EC2)
+- AWS service configuration (RDS, EC2)
+- Pinecone setup
 - IAM role setup
 - Environment variables
 - EC2 deployment with nginx
@@ -192,7 +193,8 @@ Key variables required (see `.env.example` for full list):
 AWS_REGION=us-east-1
 DB_HOST=your-rds-endpoint
 DB_PASSWORD=your-db-password
-OPENSEARCH_HOST=your-opensearch-endpoint
+PINECONE_API_KEY=your-pinecone-api-key
+PINECONE_INDEX_NAME=glance-index
 API_KEY=your-secure-api-key
 ```
 

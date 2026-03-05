@@ -31,7 +31,7 @@ def create_application() -> FastAPI:
         
         * Amazon Bedrock (Nova Lite, Nova Multimodal Embeddings)
         * Amazon RDS (PostgreSQL)
-        * Amazon OpenSearch
+        * Pinecone (Vector Database)
         """,
         version="1.0.0",
         docs_url="/docs" if settings.DEBUG else None,

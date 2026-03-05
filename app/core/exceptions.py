@@ -31,11 +31,16 @@ class DatabaseException(GlanceException):
         super().__init__(message, status_code=500)
 
 
-class OpenSearchException(GlanceException):
-    """Exception for OpenSearch operations."""
+class VectorDBException(GlanceException):
+    """Exception for vector database operations (Pinecone)."""
     
-    def __init__(self, message: str = "OpenSearch error"):
+    def __init__(self, message: str = "Vector database error"):
         super().__init__(message, status_code=503)
+
+
+# Backwards compatibility aliases
+OpenSearchException = VectorDBException
+PineconeException = VectorDBException
 
 
 class EmbeddingException(GlanceException):

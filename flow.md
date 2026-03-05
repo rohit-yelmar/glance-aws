@@ -26,10 +26,10 @@ Complete data flow documentation for the Glance visual semantic search system, e
 │  │  Frontend    │───▶│   Backend    │───▶│   Bedrock    │    │   RDS        │  │
 │  │  (External)  │◀───│   (This App) │◀───│   (Nova AI)  │    │ (PostgreSQL) │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘  │
-│                              │                        │    ┌──────────────┐   │
-│                              │                        └───▶│   Amazon     │   │
-│                              │                             │   OpenSearch │   │
-│                              └─────────────────────────────▶│  (Vector DB) │   │
+│                              │                             │    ┌──────────────┐   │
+│                              │                        └───▶│   Pinecone   │   │
+│                              │                             │  (Vector DB) │   │
+│                              └─────────────────────────────▶│  Serverless  │   │
 │                                                             └──────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -145,18 +145,22 @@ When a store sends their product catalog, the system processes each product thro
          │                                   │  └─────────────────────┘       │
          │                                   │       │                        │
          │                                   │       ▼                        │
-         │                                   │  ┌─────────────────────┐       │
-         │                                   │  │ 6. Index OpenSearch │◀──────┼──▶ OpenSearchClient
-         │                                   │  │    opensearch.        │       │      .index_embedding()
-         │                                   │  │    index_embedding()  │       │
-         │                                   │  │         │             │       │
-         │                                   │  │    Store:             │       │
-         │                                   │  │    - product_id       │       │
-         │                                   │  │    - text_embedding   │       │
-         │                                   │  │    - image_embedding  │       │
-         │                                   │  │    - combined_text    │       │
-         │                                   │  │    - metadata         │       │
-         │                                   │  └─────────────────────┘       │
+          │                                   │  ┌─────────────────────┐       │
+          │                                   │  │ 6. Store in Pinecone│◀──────┼──▶ PineconeClient
+          │                                   │  │    pinecone_client.   │       │      .upsert_product()
+          │                                   │  │    upsert_product()   │       │
+          │                                   │  │         │             │       │
+          │                                   │  │    Store:             │       │
+          │                                   │  │    - product_id       │       │
+          │                                   │  │    - text_embedding   │       │
+          │                                   │  │      (text-embeddings │       │
+          │                                   │  │       namespace)      │       │
+          │                                   │  │    - image_embedding  │       │
+          │                                   │  │      (image-embeddings│       │
+          │                                   │  │       namespace)      │       │
+          │                                   │  │    - combined_text    │       │
+          │                                   │  │    - metadata         │       │
+          │                                   │  └─────────────────────┘       │
          │                                   │       │                        │
          │                                   │       ▼                        │
          │                                   │  ┌─────────────────────┐       │
@@ -183,7 +187,7 @@ When a store sends their product catalog, the system processes each product thro
 | `app/db/rds_client.py` | `create_products_batch()` | Batch inserts products with pending status |
 | `app/db/rds_client.py` | `update_vision_attributes()` | Stores AI-generated attributes |
 | `app/db/rds_client.py` | `update_embedding_status()` | Updates processing status |
-| `app/db/opensearch_client.py` | `index_embedding()` | Stores vectors in k-NN index |
+| `app/db/pinecone_client.py` | `upsert_product()` | Stores vectors in Pinecone namespaces |
 
 ---
 
@@ -227,23 +231,25 @@ When a user searches, the query is converted to an embedding, and similar produc
          │                                   │                                  │
          │                                   │  3. Parallel Similarity Search  │
          │                                   │                                  │
-         │                                   │  ┌─────────────────────────┐   │
-         │                                   │  │  TEXT SEARCH            │   │
-         │                                   │  │  opensearch.            │───┼──▶ .search_by_text_embedding()
-         │                                   │  │  search_by_text_        │   │      (k-NN query)
-         │                                   │  │  embedding(query_emb)   │   │      Returns top 10
-         │                                   │  │                         │   │      [{product_id, score}]
-         │                                   │  └─────────────────────────┘   │
+          │                                   │  ┌─────────────────────────┐   │
+          │                                   │  │  TEXT SEARCH            │   │
+          │                                   │  │  pinecone_client.       │───┼──▶ .search_by_text_embedding()
+          │                                   │  │  search_by_text_        │   │      (cosine similarity)
+          │                                   │  │  embedding(query_emb)   │   │      Returns top 10
+          │                                   │  │  namespace:             │   │      [{product_id, score}]
+          │                                   │  │  text-embeddings        │   │
+          │                                   │  └─────────────────────────┘   │
          │                                   │              │                 │
          │                                   │              │ Parallel        │
          │                                   │              ▼                 │
-         │                                   │  ┌─────────────────────────┐   │
-         │                                   │  │  IMAGE SEARCH           │   │
-         │                                   │  │  opensearch.            │───┼──▶ .search_by_image_embedding()
-         │                                   │  │  search_by_image_       │   │      (k-NN query)
-         │                                   │  │  embedding(query_emb)   │   │      Returns top 10
-         │                                   │  │                         │   │      [{product_id, score}]
-         │                                   │  └─────────────────────────┘   │
+          │                                   │  ┌─────────────────────────┐   │
+          │                                   │  │  IMAGE SEARCH           │   │
+          │                                   │  │  pinecone_client.       │───┼──▶ .search_by_image_embedding()
+          │                                   │  │  search_by_image_       │   │      (cosine similarity)
+          │                                   │  │  embedding(query_emb)   │   │      Returns top 10
+          │                                   │  │  namespace:             │   │      [{product_id, score}]
+          │                                   │  │  image-embeddings       │   │
+          │                                   │  └─────────────────────────┘   │
          │                                   │              │                 │
          │                                   │              ▼                 │
          │                                   │  ┌─────────────────────────┐   │
@@ -316,8 +322,8 @@ When a user searches, the query is converted to an embedding, and similar produc
 | `app/services/search_service.py` | `semantic_search()` | Orchestrates the entire search flow |
 | `app/services/search_service.py` | `SearchService` | Main service class for search operations |
 | `app/services/embedding_service.py` | `embed_text()` | Converts query text to 1024-dim embedding |
-| `app/db/opensearch_client.py` | `search_by_text_embedding()` | k-NN search in text_embedding field |
-| `app/db/opensearch_client.py` | `search_by_image_embedding()` | k-NN search in image_embedding field |
+| `app/db/pinecone_client.py` | `search_by_text_embedding()` | Similarity search in text-embeddings namespace |
+| `app/db/pinecone_client.py` | `search_by_image_embedding()` | Similarity search in image-embeddings namespace |
 | `app/utils/rrf_utils.py` | `rrf_merge()` | Combines text + image results using RRF |
 | `app/utils/rrf_utils.py` | `calculate_rrf_score()` | Computes 1/(k+rank) for a single result |
 | `app/utils/rrf_utils.py` | `determine_match_type()` | Classifies match as text/image/hybrid |
@@ -333,7 +339,7 @@ When a user searches, the query is converted to an embedding, and similar produc
 |----------------|-------------|
 | `Settings` | Pydantic Settings class, loads all env vars |
 | `database_url` | Property, constructs PostgreSQL connection string |
-| `opensearch_url` | Property, constructs OpenSearch URL |
+| `pinecone_settings` | Property, returns Pinecone configuration |
 | `get_settings()` | Returns cached Settings instance |
 
 ### 4.2 Database - RDS (`app/db/rds_client.py`)
@@ -350,17 +356,17 @@ When a user searches, the query is converted to an embedding, and similar produc
 | `RDSClient.update_embedding_status()` | product_id, status | bool | Update processing status |
 | `RDSClient.health_check()` | None | bool | Test connectivity |
 
-### 4.3 Database - OpenSearch (`app/db/opensearch_client.py`)
+### 4.3 Database - Pinecone (`app/db/pinecone_client.py`)
 
 | Function | Input | Output | Description |
 |----------|-------|--------|-------------|
-| `get_opensearch_client()` | None | OpenSearchClient | Returns singleton client |
-| `OpenSearchClient.create_index()` | None | bool | Creates k-NN enabled index |
-| `OpenSearchClient.index_embedding()` | product_id, embeddings, metadata | bool | Stores vectors |
-| `OpenSearchClient.search_by_text_embedding()` | embedding vector, k | List[results] | k-NN text search |
-| `OpenSearchClient.search_by_image_embedding()` | embedding vector, k | List[results] | k-NN image search |
-| `OpenSearchClient.delete_by_product_id()` | product_id | bool | Removes embedding |
-| `OpenSearchClient.health_check()` | None | bool | Test connectivity |
+| `get_pinecone_client()` | None | PineconeClient | Returns singleton client |
+| `PineconeClient.create_index()` | None | bool | Creates serverless index |
+| `PineconeClient.upsert_product()` | product_id, store_id, embeddings, text, metadata | bool | Stores vectors in namespaces |
+| `PineconeClient.search_by_text_embedding()` | embedding vector, k, store_id | List[results] | Cosine similarity text search |
+| `PineconeClient.search_by_image_embedding()` | embedding vector, k, store_id | List[results] | Cosine similarity image search |
+| `PineconeClient.query_similar()` | embedding, namespace, top_k, filter | List[results] | Core query method with filters |
+| `PineconeClient.health_check()` | None | bool | Test connectivity |
 
 ### 4.4 Services - Bedrock (`app/services/bedrock_service.py`)
 
@@ -532,23 +538,27 @@ Combined Text String:
 Text Embedding: [0.023, -0.156, 0.089, ...]  (1024 dimensions)
 Image Embedding: [-0.045, 0.234, -0.123, ...] (1024 dimensions)
                     │
-                    │  2e. Index in OpenSearch
+                     │  2e. Store in Pinecone
                     ▼
 ┌────────────────────────────────────────────────────────────────────────────────┐
-│ OpenSearch Document                                                              │
-│ ─────────────────                                                                │
-│ _id: "shirt-001"                                                                 │
-│ product_id: "shirt-001"                                                          │
-│ store_id: "store-001"                                                            │
-│ text_embedding: [0.023, -0.156, ...] (knn_vector)                             │
-│ image_embedding: [-0.045, 0.234, ...] (knn_vector)                              │
-│ combined_text: "Product: Blue Linen Shirt..."                                   │
-│ metadata: {                                                                      │
-│   category: "shirts",                                                            │
-│   price: 59.99,                                                                  │
-│   color: "blue"                                                                  │
-│ }                                                                               │
-│ created_at: "2026-02-28T09:15:30Z"                                               │
+│ Pinecone Records (Two Namespaces)                                                │
+│ ─────────────────────────────────                                                │
+│ Namespace: text-embeddings                                                       │
+│   ID: "shirt-001"                                                                │
+│   Values: [0.023, -0.156, ...] (1024-dim)                                        │
+│   Metadata: {                                                                    │
+│     product_id: "shirt-001",                                                     │
+│     store_id: "store-001",                                                       │
+│     combined_text: "Product: Blue Linen Shirt...",                               │
+│     category: "shirts",                                                          │
+│     price: 59.99,                                                                │
+│     color: "blue"                                                                │
+│   }                                                                              │
+│                                                                                  │
+│ Namespace: image-embeddings                                                      │
+│   ID: "shirt-001"                                                                │
+│   Values: [-0.045, 0.234, ...] (1024-dim)                                        │
+│   Metadata: { (same as above) }                                                  │
 └────────────────────────────────────────────────────────────────────────────────┘
                     │
                     │  2f. Update Status
@@ -581,14 +591,16 @@ SearchRequest
                     ▼
 Query Embedding: [0.034, -0.128, 0.267, ...] (1024 dimensions)
                     │
-                    │  3. k-NN Similarity Search (Parallel)
-                    ├──▶ Text Embedding Search (top 10)
-                    │    Query: {knn: {text_embedding: query_vec, k: 10}}
-                    │    Results: [{pid: "shirt-001", score: 0.92}, ...]
-                    │
-                    └──▶ Image Embedding Search (top 10)
-                         Query: {knn: {image_embedding: query_vec, k: 10}}
-                         Results: [{pid: "shirt-001", score: 0.88}, ...]
+                     │  3. Cosine Similarity Search (Parallel)
+                     ├──▶ Text Embedding Search (top 10)
+                     │    Namespace: text-embeddings
+                     │    Query: vector + store_id filter
+                     │    Results: [{pid: "shirt-001", score: 0.92}, ...]
+                     │
+                     └──▶ Image Embedding Search (top 10)
+                          Namespace: image-embeddings
+                          Query: vector + store_id filter
+                          Results: [{pid: "shirt-001", score: 0.88}, ...]
                     │
                     │  4. RRF Merge
                     ▼
@@ -656,7 +668,7 @@ SearchResponse
 
 | Endpoint | Method | Auth | Description | Key Components |
 |----------|--------|------|-------------|----------------|
-| `/health` | GET | No | Service health check | RDS, OpenSearch connectivity |
+| `/health` | GET | No | Service health check | RDS, Pinecone connectivity |
 | `/ingest-catalog` | POST | API Key | Product catalog ingestion | Vision, Embeddings, Background tasks |
 | `/search` | POST | API Key | Semantic product search | Query embedding, k-NN, RRF |
 | `/product/{id}` | GET | API Key | Get product details | RDS lookup |
@@ -700,7 +712,7 @@ Exceptions flow through these layers:
 1. Service Layer
    - BedrockException → 503 Service Unavailable
    - DatabaseException → 500 Internal Server Error
-   - OpenSearchException → 503 Service Unavailable
+   - PineconeException → 503 Service Unavailable
    - EmbeddingException → 503 Service Unavailable
    - VisionAnalysisException → 503 Service Unavailable
    - ProductNotFoundException → 404 Not Found
@@ -736,7 +748,7 @@ Exceptions flow through these layers:
 | `app/services/embedding_service.py` | ~55 | Embedding generation |
 | `app/services/search_service.py` | ~110 | RRF search orchestration |
 | `app/db/rds_client.py` | ~170 | PostgreSQL operations |
-| `app/db/opensearch_client.py` | ~220 | OpenSearch k-NN operations |
+| `app/db/pinecone_client.py` | ~220 | Pinecone vector operations |
 | `app/db/models.py` | ~50 | SQLAlchemy ORM models |
 | `app/utils/image_utils.py` | ~100 | Image download/processing |
 | `app/utils/rrf_utils.py` | ~85 | RRF algorithm implementation |
@@ -752,4 +764,4 @@ Exceptions flow through these layers:
 **Total Functions**: 50+  
 **API Endpoints**: 4  
 **Database Tables**: 1  
-**OpenSearch Indices**: 1
+**Pinecone Namespaces**: 2 (text-embeddings, image-embeddings)

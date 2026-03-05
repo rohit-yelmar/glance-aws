@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from app.api.schemas import CatalogRequest, CatalogResponse
 from app.core.constants import EMBEDDING_STATUS_PENDING, EMBEDDING_STATUS_PROCESSING, EMBEDDING_STATUS_COMPLETED, EMBEDDING_STATUS_FAILED
 from app.core.logging import get_logger
-from app.db.opensearch_client import get_opensearch_client
+from app.db.pinecone_client import get_pinecone_client
 from app.db.rds_client import get_rds_client
 from app.services.embedding_service import get_embedding_service
 from app.services.vision_service import get_vision_service
@@ -44,7 +44,7 @@ async def process_product(
     3. Update RDS with vision attributes
     4. Combine text
     5. Generate embeddings
-    6. Index in OpenSearch
+    6. Index in Pinecone
     7. Update status
     """
     product_id = product_data["product_id"]
@@ -85,9 +85,9 @@ async def process_product(
         text_embedding = await embedding_service.embed_text(combined_text)
         image_embedding = await embedding_service.embed_image(image_bytes)
         
-        # 6. Index in OpenSearch
-        opensearch = get_opensearch_client()
-        opensearch.index_embedding(
+        # 6. Index in Pinecone
+        pinecone = get_pinecone_client()
+        pinecone.upsert_product(
             product_id=product_id,
             store_id=store_id,
             text_embedding=text_embedding,

@@ -35,7 +35,7 @@ glance-aws/
 │   ├── db/
 │   │   ├── __init__.py
 │   │   ├── rds_client.py       # PostgreSQL connection & operations
-│   │   ├── opensearch_client.py # OpenSearch connection & operations
+│   │   ├── pinecone_client.py  # Pinecone connection & operations
 │   │   └── models.py           # SQLAlchemy models
 │   ├── utils/
 │   │   ├── __init__.py
@@ -47,7 +47,7 @@ glance-aws/
 │       └── catalog_processor.py # Async catalog processing
 ├── scripts/
 │   ├── init_db.py              # Database initialization script
-│   ├── init_opensearch.py      # OpenSearch index creation
+│   ├── init_pinecone.py        # Pinecone index creation
 │   └── setup_aws.sh            # AWS resource setup helper
 ├── tests/                      # (Optional) Test files
 ├── docs/
@@ -72,7 +72,7 @@ glance-aws/
 - Environment variable loading
 - AWS region configuration
 - Database connection strings
-- OpenSearch endpoint configuration
+- Pinecone configuration
 - Bedrock model IDs
 
 #### `.env.example`
@@ -114,11 +114,13 @@ async def process_catalog_batch(products: List[Product]):
         text_embedding = await embedding_service.embed_text(combined_text)
         image_embedding = await embedding_service.embed_image(image_bytes)
 
-        # 6. Store in OpenSearch
-        await opensearch_client.index_embedding(
+        # 6. Store in Pinecone
+        await pinecone_client.upsert_product(
             product_id=product.id,
+            store_id=product.store_id,
             text_embedding=text_embedding,
             image_embedding=image_embedding,
+            combined_text=combined_text,
             metadata={...}
         )
 
@@ -145,7 +147,7 @@ async def process_catalog_batch(products: List[Product]):
 **Implementation**:
 
 - Check RDS connectivity
-- Check OpenSearch connectivity
+- Check Pinecone connectivity
 - Check Bedrock availability
 - Return aggregated status
 
@@ -233,30 +235,38 @@ async def process_catalog_batch(products: List[Product]):
 - Use SQLAlchemy with connection pool
 - Async support via asyncpg (optional) or sync with thread pool
 
-#### `app/db/opensearch_client.py`
+#### `app/db/pinecone_client.py`
 
 **Purpose**: Vector database operations
 **Methods**:
 
-- `index_embedding(product_id, text_emb, image_emb, metadata) -> None`
-- `search_by_text_embedding(embedding, k=10) -> list[SearchHit]`
-- `search_by_image_embedding(embedding, k=10) -> list[SearchHit]`
-- `create_index(index_name, mappings) -> None`
+- `upsert_product(product_id, store_id, text_emb, image_emb, combined_text, metadata) -> None`
+- `search_by_text_embedding(embedding, k=10, store_id) -> list[SearchHit]`
+- `search_by_image_embedding(embedding, k=10, store_id) -> list[SearchHit]`
+- `create_index() -> None`
 
-**k-NN Query Format**:
+**Namespaces**:
+- `text-embeddings` - Stores text embeddings
+- `image-embeddings` - Stores image embeddings
 
-```json
-{
-  "query": {
-    "knn": {
-      "text_embedding": {
-        "vector": [...],
-        "k": 10
-      }
-    }
-  }
-}
+**Query Format**:
+
+```python
+# Query with filter
+results = index.query(
+    vector=embedding,
+    top_k=k,
+    namespace="text-embeddings",
+    filter={"store_id": {"$eq": store_id}},
+    include_metadata=True
+)
 ```
+
+**Pinecone Configuration**:
+- **Serverless** on AWS us-east-1
+- **Metric**: Cosine similarity
+- **Dimensions**: 1024 (for Nova embeddings)
+- **Authentication**: API key-based
 
 #### `app/db/models.py`
 
@@ -358,10 +368,10 @@ async def ingest_catalog(catalog: CatalogRequest, background_tasks: BackgroundTa
                       └──────────────┘
                              │
                              ▼
-                      ┌──────────────┐
-                      │ OpenSearch   │
-                      │ (Vectors)    │
-                      └──────────────┘
+                       ┌──────────────┐
+                       │   Pinecone   │
+                       │ (Vector DB)  │
+                       └──────────────┘
 ```
 
 ### Search Flow
@@ -373,12 +383,13 @@ async def ingest_catalog(catalog: CatalogRequest, background_tasks: BackgroundTa
 └──────────────┘      └──────────────┘      └──────────────┘
                              │                       │
                              │                       │
-                             │         ┌─────────────┴─────────────┐
-                             │         ▼                           ▼
-                             │  ┌──────────────┐            ┌──────────────┐
-                             │  │ OpenSearch   │            │ OpenSearch   │
-                             └──│ Text k-NN    │            │ Image k-NN   │
-                                └──────────────┘            └──────────────┘
+                              │         ┌─────────────┴─────────────┐
+                              │         ▼                           ▼
+                              │  ┌──────────────┐            ┌──────────────┐
+                              │  │   Pinecone   │            │   Pinecone   │
+                              └──│ Text Search  │            │ Image Search │
+                                 │  Namespace   │            │  Namespace   │
+                                 └──────────────┘            └──────────────┘
                                         │                           │
                                         └───────────┬───────────────┘
                                                     ▼
@@ -408,7 +419,7 @@ async def ingest_catalog(catalog: CatalogRequest, background_tasks: BackgroundTa
 
 1. Set up project structure
 2. Implement configuration management
-3. Create database clients (RDS, OpenSearch)
+3. Create database clients (RDS, Pinecone)
 4. Set up logging and error handling
 
 ### Phase 2: AWS Integration
@@ -480,7 +491,7 @@ async def ingest_catalog(catalog: CatalogRequest, background_tasks: BackgroundTa
 - **Batch Size**: 1 (Nova Embeddings doesn't support batching)
 - **Optimization**: Parallel processing for catalog ingestion
 
-### OpenSearch k-NN
+### Pinecone Vector Search
 
 - **Query Latency**: ~50-100ms
 - **ef_search**: 100 (balance between speed and accuracy)
@@ -499,7 +510,7 @@ async def ingest_catalog(catalog: CatalogRequest, background_tasks: BackgroundTa
 | Risk                           | Mitigation                         |
 | ------------------------------ | ---------------------------------- |
 | Bedrock throttling             | Exponential backoff (1s, 2s, 4s)   |
-| OpenSearch connection failure  | Retry with circuit breaker pattern |
+| Pinecone connection failure    | Retry with circuit breaker pattern |
 | Large image downloads          | Timeout (30s), size limit (10MB)   |
 | Invalid image URLs             | Validate URL, catch exceptions     |
 | JSON parsing failures          | Try/except with fallback           |

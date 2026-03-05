@@ -4,9 +4,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.config import get_settings
-from app.core.exceptions import DatabaseException, OpenSearchException
+from app.core.exceptions import DatabaseException, PineconeException
 from app.core.logging import get_logger
-from app.db.opensearch_client import get_opensearch_client
+from app.db.pinecone_client import get_pinecone_client
 from app.db.rds_client import get_rds_client
 
 logger = get_logger(__name__)
@@ -38,16 +38,16 @@ async def health_check():
         services_status["database"] = "error"
         overall_status = "degraded"
     
-    # Check OpenSearch
+    # Check Pinecone
     try:
-        opensearch = get_opensearch_client()
-        os_healthy = opensearch.health_check()
-        services_status["opensearch"] = "connected" if os_healthy else "disconnected"
-        if not os_healthy:
+        pinecone = get_pinecone_client()
+        pc_healthy = pinecone.health_check()
+        services_status["pinecone"] = "connected" if pc_healthy else "disconnected"
+        if not pc_healthy:
             overall_status = "degraded"
     except Exception as e:
-        logger.error("health_check_opensearch_error", error=str(e))
-        services_status["opensearch"] = "error"
+        logger.error("health_check_pinecone_error", error=str(e))
+        services_status["pinecone"] = "error"
         overall_status = "degraded"
     
     # Bedrock check is implicit (we'll verify on first use)
@@ -63,7 +63,7 @@ async def health_check():
     logger.debug("health_check", status=overall_status)
     
     # Return 503 if critical services are down
-    if services_status["database"] == "error" or services_status["opensearch"] == "error":
+    if services_status["database"] == "error" or services_status["pinecone"] == "error":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=response

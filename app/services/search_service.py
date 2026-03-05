@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 from app.config import get_settings
 from app.core.exceptions import SearchServiceException
 from app.core.logging import get_logger
-from app.db.opensearch_client import get_opensearch_client
+from app.db.pinecone_client import get_pinecone_client
 from app.db.rds_client import get_rds_client
 from app.services.embedding_service import get_embedding_service
 from app.utils.rrf_utils import rrf_merge, determine_match_type
@@ -19,7 +19,7 @@ class SearchService:
     
     def __init__(self):
         self.embedding_service = get_embedding_service()
-        self.opensearch = get_opensearch_client()
+        self.pinecone = get_pinecone_client()
         self.rds = get_rds_client()
         self.settings = get_settings()
     
@@ -57,14 +57,14 @@ class SearchService:
             top_k = self.settings.SEARCH_TOP_K
             
             # Search by text embedding
-            text_results_raw = self.opensearch.search_by_text_embedding(
+            text_results_raw = self.pinecone.search_by_text_embedding(
                 embedding=query_embedding,
                 k=top_k,
                 store_id=store_id
             )
             
             # Search by image embedding (using same query embedding in unified space)
-            image_results_raw = self.opensearch.search_by_image_embedding(
+            image_results_raw = self.pinecone.search_by_image_embedding(
                 embedding=query_embedding,
                 k=top_k,
                 store_id=store_id

@@ -39,13 +39,11 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = "password"
     DB_POOL_SIZE: int = 10
     
-    # OpenSearch
-    OPENSEARCH_HOST: str = "localhost"
-    OPENSEARCH_PORT: int = 9200
-    OPENSEARCH_USE_SSL: bool = False
-    OPENSEARCH_VERIFY_CERTS: bool = False
-    OPENSEARCH_INDEX: str = "product_embeddings"
-    OPENSEARCH_AWS_REGION: str = "us-east-1"
+    # Pinecone
+    PINECONE_API_KEY: str = "your-pinecone-api-key"
+    PINECONE_INDEX_NAME: str = "product-embeddings"
+    PINECONE_CLOUD: str = "aws"
+    PINECONE_REGION: str = "us-east-1"
     
     # Application Settings
     MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB
@@ -62,12 +60,6 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """Construct database URL from components."""
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-    
-    @property
-    def opensearch_url(self) -> str:
-        """Construct OpenSearch URL."""
-        protocol = "https" if self.OPENSEARCH_USE_SSL else "http"
-        return f"{protocol}://{self.OPENSEARCH_HOST}:{self.OPENSEARCH_PORT}"
 
 
 @lru_cache()

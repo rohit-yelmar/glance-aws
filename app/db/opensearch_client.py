@@ -1,8 +1,7 @@
 """OpenSearch client for vector storage and similarity search."""
 
 import boto3
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
+from requests_aws4auth import AWS4Auth
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from opensearchpy.helpers import bulk
 
@@ -12,19 +11,6 @@ from app.core.exceptions import OpenSearchException
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-class AWSV4SignerAuth:
-    """AWS Signature V4 authentication for OpenSearch."""
-    
-    def __init__(self, region: str):
-        self.region = region
-        self.credentials = boto3.Session().get_credentials()
-    
-    def __call__(self, method, url, body=None):
-        request = AWSRequest(method=method, url=url, data=body)
-        SigV4Auth(self.credentials, "es", self.region).add_auth(request)
-        return request.headers.items()
 
 
 class OpenSearchClient:
@@ -42,11 +28,24 @@ class OpenSearchClient:
         # Determine authentication method
         auth = None
         if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
-            # Use explicit credentials
-            auth = (settings.AWS_ACCESS_KEY_ID, settings.AWS_SECRET_ACCESS_KEY)
+            # Use explicit credentials with AWS4Auth
+            auth = AWS4Auth(
+                settings.AWS_ACCESS_KEY_ID,
+                settings.AWS_SECRET_ACCESS_KEY,
+                settings.OPENSEARCH_AWS_REGION,
+                'es'
+            )
         else:
-            # Use IAM role / AWS V4 signing
-            auth = AWSV4SignerAuth(settings.OPENSEARCH_AWS_REGION)
+            # Use IAM role / AWS V4 signing with credentials from environment
+            session = boto3.Session()
+            credentials = session.get_credentials()
+            auth = AWS4Auth(
+                credentials.access_key,
+                credentials.secret_key,
+                settings.OPENSEARCH_AWS_REGION,
+                'es',
+                session_token=credentials.token
+            )
         
         client = OpenSearch(
             hosts=[{

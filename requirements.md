@@ -56,11 +56,11 @@ A dual-path embedding system combining:
        │                                                    │
        │                                                    │
        ▼                                                    ▼
-  ┌─────────────────┐                              ┌─────────────────┐
-  │   Amazon RDS    │                              │  OpenSearch     │
-  │  (PostgreSQL)   │                              │  (Vector DB)    │
-  │  Product Store  │                              │  + Embeddings   │
-  └─────────────────┘                              └─────────────────┘
+   ┌─────────────────┐                              ┌─────────────────┐
+   │   Amazon RDS    │                              │    Pinecone     │
+   │  (PostgreSQL)   │                              │  (Vector DB)    │
+   │  Product Store  │                              │  Serverless     │
+   └─────────────────┘                              └─────────────────┘
 
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -111,12 +111,12 @@ A dual-path embedding system combining:
 |-----------|------------|
 | Framework | FastAPI (Python) |
 | Database | Amazon RDS (PostgreSQL) |
-| Vector DB | Amazon OpenSearch |
+| Vector DB | Pinecone (Serverless) |
 | Vision Model | Amazon Nova 2 Lite |
 | Embeddings | Amazon Nova Multimodal Embeddings |
 | AWS SDK | boto3 |
 | Database Driver | psycopg2-binary |
-| Vector Client | opensearch-py + requests-aws4auth |
+| Vector Client | pinecone-python-client |
 | Deployment | Amazon EC2 |
 
 ### 4.2 AWS Services Required
@@ -137,21 +137,26 @@ A dual-path embedding system combining:
   - `products` - Core product information
   - `product_attributes` - Extended product attributes
 
-#### 4.2.3 Amazon OpenSearch Service
-- **Version**: OpenSearch 2.x
-- **Instance Type**: t3.small.search (dev) / t3.medium.search (prod)
-- **Instance Count**: 1 (dev) / 2 (prod - multi-AZ)
+#### 4.2.3 Pinecone Vector Database
+- **Deployment**: Serverless on AWS
+- **Region**: us-east-1 (should match other AWS services)
+- **Index Name**: `glance-index`
+- **Dimensions**: 1024 (matches Nova embedding dimensions)
+- **Metric**: Cosine similarity
 - **Purpose**: Vector storage and similarity search
-- **Index Configuration**:
-  - `product_embeddings` - Multimodal embeddings with k-NN enabled
-  - k-NN algorithm: HNSW (Hierarchical Navigable Small World)
-  - Distance metric: Cosine similarity
+- **Namespaces**:
+  - `text-embeddings` - Stores text embeddings
+  - `image-embeddings` - Stores image embeddings
+- **Authentication**: API key-based (via `PINECONE_API_KEY`)
+- **Filter Syntax**: MongoDB-style operators (e.g., `{"store_id": {"$eq": "..."}}`)
+- **Query Method**: Cosine similarity search with metadata filtering
 
 #### 4.2.4 Amazon EC2
 - **Instance Type**: t3.medium (2 vCPU, 4GB RAM)
 - **OS**: Amazon Linux 2023 / Ubuntu 22.04 LTS
 - **Security Group**: Ports 22 (SSH), 80 (HTTP), 443 (HTTPS), 8000 (FastAPI)
-- **IAM Role**: EC2 instance profile with access to Bedrock, RDS, OpenSearch
+- **IAM Role**: EC2 instance profile with access to Bedrock, RDS
+- **Note**: Pinecone uses API key authentication (not AWS IAM)
 
 ---
 
@@ -214,7 +219,7 @@ A dual-path embedding system combining:
 4. Generate vision-based attributes
 5. Combine original + generated text
 6. Generate multimodal embeddings (text + image)
-7. Store embeddings in OpenSearch with product_id metadata
+7. Store embeddings in Pinecone with product_id metadata (text-embeddings and image-embeddings namespaces)
 
 ---
 
@@ -259,8 +264,8 @@ A dual-path embedding system combining:
 
 **Retrieval Algorithm**:
 1. Generate query embedding using Nova Multimodal
-2. Perform text-based similarity search (top_k=10)
-3. Perform image-based similarity search (top_k=10)
+2. Perform text-based similarity search in `text-embeddings` namespace (top_k=10)
+3. Perform image-based similarity search in `image-embeddings` namespace (top_k=10)
 4. Apply RRF (Reciprocal Rank Fusion) to merge results:
    - Formula: `score = Σ(1 / (k + rank))` where k=60
 5. Deduplicate by product_id
@@ -279,7 +284,7 @@ A dual-path embedding system combining:
   "version": "1.0.0",
   "services": {
     "database": "connected",
-    "opensearch": "connected",
+    "pinecone": "connected",
     "bedrock": "available"
   },
   "timestamp": "2026-02-28T06:04:12Z"
@@ -342,62 +347,54 @@ CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_embedding_status ON products(embedding_status);
 ```
 
-### 6.2 OpenSearch Index Schema
+### 6.2 Pinecone Index Schema
 
-#### Index: `product_embeddings`
+#### Index: `glance-index`
+
+**Index Configuration**:
 ```json
 {
-  "settings": {
-    "index": {
-      "knn": true,
-      "knn.algo_param.ef_search": 100
-    },
-    "number_of_shards": 1,
-    "number_of_replicas": 0
-  },
-  "mappings": {
-    "properties": {
-      "product_id": { "type": "keyword" },
-      "store_id": { "type": "keyword" },
-      "embedding_type": { "type": "keyword" },
-      "text_embedding": {
-        "type": "knn_vector",
-        "dimension": 1024,
-        "method": {
-          "name": "hnsw",
-          "space_type": "cosinesimil",
-          "engine": "nmslib",
-          "parameters": {
-            "ef_construction": 128,
-            "m": 24
-          }
-        }
-      },
-      "image_embedding": {
-        "type": "knn_vector",
-        "dimension": 1024,
-        "method": {
-          "name": "hnsw",
-          "space_type": "cosinesimil",
-          "engine": "nmslib",
-          "parameters": {
-            "ef_construction": 128,
-            "m": 24
-          }
-        }
-      },
-      "combined_text": { "type": "text" },
-      "metadata": {
-        "properties": {
-          "category": { "type": "keyword" },
-          "price": { "type": "float" },
-          "color": { "type": "keyword" }
-        }
-      },
-      "created_at": { "type": "date" }
+  "index_name": "glance-index",
+  "dimension": 1024,
+  "metric": "cosine",
+  "spec": {
+    "serverless": {
+      "cloud": "aws",
+      "region": "us-east-1"
     }
   }
 }
+```
+
+**Namespaces**:
+- `text-embeddings` - Stores text embeddings
+- `image-embeddings` - Stores image embeddings
+
+**Vector Record Structure**:
+```json
+{
+  "id": "shirt-001",
+  "values": [0.023, -0.156, ...],
+  "metadata": {
+    "product_id": "shirt-001",
+    "store_id": "store-001",
+    "combined_text": "Product: Blue Linen Shirt...",
+    "category": "shirts",
+    "price": 59.99,
+    "color": "blue"
+  }
+}
+```
+
+**Query Example**:
+```python
+results = index.query(
+    vector=query_embedding,
+    top_k=10,
+    namespace="text-embeddings",
+    filter={"store_id": {"$eq": "store-001"}},
+    include_metadata=True
+)
 ```
 
 ---
@@ -531,7 +528,7 @@ def merge_results(text_results: List[Product],
 
 ### 9.4 Reliability
 - Health check endpoint for monitoring
-- Graceful degradation if Bedrock/OpenSearch temporarily unavailable
+- Graceful degradation if Bedrock/Pinecone temporarily unavailable
 - Retry logic for transient AWS service failures (max 3 retries with exponential backoff)
 
 ---
@@ -567,7 +564,7 @@ def merge_results(text_results: List[Product],
 | **Latent Space** | A mathematical space where similar items are positioned closer together |
 | **Embedding** | A numerical vector representation of text or image |
 | **k-NN** | k-Nearest Neighbors - algorithm for finding similar vectors |
-| **HNSW** | Hierarchical Navigable Small World - efficient approximate nearest neighbor algorithm |
+| **Namespace** | Logical separation within a Pinecone index for different vector types |
 | **RRF** | Reciprocal Rank Fusion - algorithm for merging ranked lists |
 | **Cosine Similarity** | Measure of similarity between two vectors |
 

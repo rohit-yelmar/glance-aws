@@ -113,7 +113,7 @@ API_KEY=your-secure-api-key-here
 # ============================================
 # AWS CONFIGURATION
 # ============================================
-# AWS Region (must match your RDS/OpenSearch region)
+# AWS Region (must match your RDS/Pinecone region)
 AWS_REGION=us-east-1
 
 # AWS Access Keys (optional if using IAM role on EC2)
@@ -154,25 +154,19 @@ DB_PASSWORD=your-secure-db-password
 DB_POOL_SIZE=10
 
 # ============================================
-# OPENSEARCH CONFIGURATION
+# PINECONE CONFIGURATION
 # ============================================
-# OpenSearch domain endpoint (without https://)
-OPENSEARCH_HOST=search-glance-XXXXXXXX.us-east-1.es.amazonaws.com
+# Pinecone API key (get from Pinecone console)
+PINECONE_API_KEY=your-pinecone-api-key
 
-# OpenSearch port
-OPENSEARCH_PORT=443
+# Pinecone index name
+PINECONE_INDEX_NAME=glance-index
 
-# Use HTTPS (true for AWS OpenSearch)
-OPENSEARCH_USE_SSL=true
+# Pinecone cloud provider (aws)
+PINECONE_CLOUD=aws
 
-# Verify SSL certificates
-OPENSEARCH_VERIFY_CERTS=true
-
-# OpenSearch index name
-OPENSEARCH_INDEX=product_embeddings
-
-# AWS Region for OpenSearch signing
-OPENSEARCH_AWS_REGION=us-east-1
+# Pinecone region (must match your AWS region)
+PINECONE_REGION=us-east-1
 
 # ============================================
 # APPLICATION SETTINGS
@@ -287,73 +281,52 @@ aws rds describe-db-instances \
 
 ---
 
-### 4.2 Create OpenSearch Domain
+### 4.2 Create Pinecone Index
 
-**Via AWS Console:**
+**Via Pinecone Console:**
 
-1. Go to [OpenSearch Console](https://console.aws.amazon.com/es/)
-2. Click "Create domain"
-3. Configuration:
-   - **Domain name**: `glance-search`
-   - **Deployment type**: Development and testing
-   - **Version**: OpenSearch 2.11
-   - **Instance type**: t3.small.search
-   - **Number of nodes**: 1
-   - **Storage**: EBS, 10 GB
-   - **Access policy**: Configure domain level access policy
+1. Go to [Pinecone Console](https://app.pinecone.io/)
+2. Sign up or log in to your account
+3. Click "Create Index"
+4. Configuration:
+   - **Index name**: `glance-index`
+   - **Dimensions**: `1024` (for Nova Multimodal Embeddings)
+   - **Metric**: `Cosine`
+   - **Cloud**: `AWS`
+   - **Region**: `us-east-1` (Serverless)
 
-4. Access Policy (Customize):
+5. Click "Create Index"
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::YOUR_ACCOUNT_ID:root"
-      },
-      "Action": "es:*",
-      "Resource": "arn:aws:es:us-east-1:YOUR_ACCOUNT_ID:domain/glance-search/*"
-    },
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::YOUR_ACCOUNT_ID:role/GlanceEC2Role"
-      },
-      "Action": "es:*",
-      "Resource": "arn:aws:es:us-east-1:YOUR_ACCOUNT_ID:domain/glance-search/*"
-    }
-  ]
-}
-```
+**Configuration Details:**
 
-5. Wait for domain to be active (~15 minutes)
+| Setting | Value | Description |
+|---------|-------|-------------|
+| Index Name | `glance-index` | Your chosen index name |
+| Dimensions | `1024` | Must match Nova embedding dimensions |
+| Metric | `Cosine` | Cosine similarity for vector comparison |
+| Cloud | `AWS` | Runs on AWS infrastructure |
+| Region | `us-east-1` | Should match your other AWS services |
 
-**Via AWS CLI:**
+**Get Pinecone API Key:**
+
+1. In Pinecone Console, go to "API Keys" in the left sidebar
+2. Copy your API key (starts with `pcsk_`)
+3. Add it to your `.env` file as `PINECONE_API_KEY`
+
+**Via Pinecone Python SDK:**
 
 ```bash
-# Create OpenSearch domain (requires IAM role first - see EC2 setup)
-aws opensearch create-domain \
-  --domain-name glance-search \
-  --engine-version OpenSearch_2.11 \
-  --cluster-config InstanceType=t3.small.search,InstanceCount=1 \
-  --ebs-options EBSEnabled=true,VolumeSize=10,VolumeType=gp2 \
-  --access-policies '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"es:*","Resource":"arn:aws:es:us-east-1:'$(aws sts get-caller-identity --query Account --output text)':domain/glance-search/*"}]}' \
-  --region us-east-1
+# Install Pinecone SDK
+pip install pinecone
 
-# Wait for domain to be active
-aws opensearch wait domain-available --domain-name glance-search
+# Create index programmatically
+python scripts/init_pinecone.py
 ```
 
-**Get OpenSearch Endpoint:**
-
-```bash
-aws opensearch describe-domain \
-  --domain-name glance-search \
-  --query 'DomainStatus.Endpoint' \
-  --output text
-```
+The initialization script will:
+- Connect to Pinecone using your API key
+- Create the index with proper settings if it doesn't exist
+- Set up namespaces for text and image embeddings
 
 ---
 
@@ -367,7 +340,7 @@ aws opensearch describe-domain \
 4. Attach policies:
    - `AmazonBedrockFullAccess` (or scoped policy below)
    - `AmazonRDSReadOnlyAccess`
-   - `AmazonOpenSearchServiceFullAccess`
+   - Note: Pinecone uses API key authentication (not AWS IAM), so no additional AWS permissions needed for vector database
 
 **Scoped Policy (More Secure):**
 
@@ -391,16 +364,7 @@ aws opensearch describe-domain \
       "Action": ["rds:DescribeDBInstances", "rds:DescribeDBClusters"],
       "Resource": "*"
     },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "es:ESHttpGet",
-        "es:ESHttpPut",
-        "es:ESHttpPost",
-        "es:ESHttpDelete"
-      ],
-      "Resource": "arn:aws:es:us-east-1:*:domain/glance-search/*"
-    },
+
     {
       "Effect": "Allow",
       "Action": [
@@ -446,8 +410,8 @@ pip install -r requirements.txt
 # Initialize PostgreSQL tables
 python scripts/init_db.py
 
-# Initialize OpenSearch index
-python scripts/init_opensearch.py
+# Initialize Pinecone index
+python scripts/init_pinecone.py
 ```
 
 ### 5.3 Run Development Server
@@ -598,7 +562,7 @@ cp .env.example .env
 
 # Initialize databases
 python scripts/init_db.py
-python scripts/init_opensearch.py
+python scripts/init_pinecone.py
 
 # Create systemd service
 sudo tee /etc/systemd/system/glance.service > /dev/null <<EOF
@@ -761,17 +725,17 @@ Error: An error occurred (AccessDeniedException) when calling InvokeModel
 - Check IAM role has `bedrock:InvokeModel` permission
 - Ensure correct region in AWS_REGION env var
 
-**Issue**: OpenSearch connection timeout
+**Issue**: Pinecone connection timeout
 
 ```
-ConnectionTimeout: Connection timed out
+PineconeApiException: Connection timed out
 ```
 
 **Solution**:
 
-- Verify OpenSearch domain is in `Active` state
-- Check security group allows port 443 from EC2
-- Verify IAM role has OpenSearch permissions
+- Verify PINECONE_API_KEY is set correctly in .env
+- Check Pinecone index exists in console
+- Verify PINECONE_REGION matches your AWS region
 
 **Issue**: RDS connection refused
 
@@ -811,9 +775,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 **Slow Search Queries:**
 
-- Increase OpenSearch instance size
-- Tune ef_search parameter (lower = faster, less accurate)
-- Enable OpenSearch caching
+- Check Pinecone index metrics in console
+- Verify top_k parameter is not too high
+- Consider adding metadata filters to reduce search space
 
 **Slow Catalog Processing:**
 
@@ -866,8 +830,8 @@ sudo nginx -t && sudo systemctl restart nginx
 # Database connection test
 psql -h YOUR_RDS_ENDPOINT -U glance_admin -d glance_db
 
-# OpenSearch test
-curl -X GET https://YOUR_OPENSEARCH_ENDPOINT/_cluster/health
+# Pinecone test (via Python)
+python -c "from app.db.pinecone_client import get_pinecone_client; c = get_pinecone_client(); print('Pinecone OK')"
 
 # Check AWS credentials on EC2
 curl http://169.254.169.254/latest/meta-data/iam/security-credentials/
