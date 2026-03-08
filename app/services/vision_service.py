@@ -7,6 +7,7 @@ from app.core.constants import VISION_ANALYSIS_PROMPT
 from app.core.exceptions import VisionAnalysisException
 from app.core.logging import get_logger
 from app.services.bedrock_service import get_bedrock_service
+from app.services.vllm_service import get_vllm_service
 
 logger = get_logger(__name__)
 
@@ -15,7 +16,15 @@ class VisionService:
     """Service for analyzing product images using vision models."""
     
     def __init__(self):
-        self.bedrock = get_bedrock_service()
+        self.settings = get_settings()
+        self.use_vllm = self.settings.USE_VLLM
+        
+        if self.use_vllm:
+            self.vllm = get_vllm_service()
+            logger.info("vision_service_using_vllm")
+        else:
+            self.bedrock = get_bedrock_service()
+            logger.info("vision_service_using_bedrock")
     
     async def analyze_image(self, image_bytes: bytes) -> Dict[str, Any]:
         """Analyze product image and extract attributes.
@@ -32,12 +41,19 @@ class VisionService:
         try:
             logger.info("starting_image_analysis", image_size=len(image_bytes))
             
-            # Call Bedrock Nova Lite
-            response_text = await self.bedrock.invoke_nova_lite(
-                image_bytes=image_bytes,
-                system_prompt=VISION_ANALYSIS_PROMPT,
-                user_prompt="Analyze this fashion product image and provide structured attributes."
-            )
+            # Call vLLM Qwen or Bedrock Nova Lite
+            if self.use_vllm:
+                response_text = await self.vllm.invoke_vision_model(
+                    image_bytes=image_bytes,
+                    system_prompt=VISION_ANALYSIS_PROMPT,
+                    user_prompt="Analyze this fashion product image and provide structured attributes."
+                )
+            else:
+                response_text = await self.bedrock.invoke_nova_lite(
+                    image_bytes=image_bytes,
+                    system_prompt=VISION_ANALYSIS_PROMPT,
+                    user_prompt="Analyze this fashion product image and provide structured attributes."
+                )
             
             # Parse JSON response
             try:

@@ -1,13 +1,13 @@
 # Glance Backend - Setup & Deployment Guide
 
-Complete guide for setting up and deploying the Glance visual semantic search backend on AWS.
+Complete guide for setting up and deploying the Glance visual semantic search backend. This version uses **vLLM with Qwen models** running on EC2 instead of AWS Bedrock (which requires enabled bedrock access).
 
 ---
 
 ## Table of Contents
 
 1. [Prerequisites](#1-prerequisites)
-2. [AWS Account Setup](#2-aws-account-setup)
+2. [vLLM/EC2 Setup](#2-vllmec2-setup)
 3. [Environment Variables](#3-environment-variables)
 4. [AWS Service Configuration](#4-aws-service-configuration)
 5. [Local Development Setup](#5-local-development-setup)
@@ -126,8 +126,8 @@ AWS_SECRET_ACCESS_KEY=...
 # Amazon Nova 2 Lite model ID
 BEDROCK_NOVA_LITE_MODEL_ID=amazon.nova-lite-v1:0
 
-# Amazon Nova Multimodal Embeddings model ID
-BEDROCK_EMBEDDING_MODEL_ID=amazon.nova-embeddings-v1:0
+# Cohere Embeddings model ID
+BEDROCK_EMBEDDING_MODEL_ID=cohere.embed-v4:0
 
 # Embedding dimensions (Nova = 1024)
 EMBEDDING_DIMENSIONS=1024
@@ -302,7 +302,7 @@ aws rds describe-db-instances \
 | Setting | Value | Description |
 |---------|-------|-------------|
 | Index Name | `glance-index` | Your chosen index name |
-| Dimensions | `1024` | Must match Nova embedding dimensions |
+| Dimensions | `384` or `768` | Must match vLLM embedding dimensions |
 | Metric | `Cosine` | Cosine similarity for vector comparison |
 | Cloud | `AWS` | Runs on AWS infrastructure |
 | Region | `us-east-1` | Should match your other AWS services |
@@ -338,11 +338,10 @@ The initialization script will:
 2. Roles → Create role
 3. Trusted entity: AWS Service → EC2
 4. Attach policies:
-   - `AmazonBedrockFullAccess` (or scoped policy below)
    - `AmazonRDSReadOnlyAccess`
-   - Note: Pinecone uses API key authentication (not AWS IAM), so no additional AWS permissions needed for vector database
+   - Note: vLLM runs locally on EC2 (no AWS Bedrock needed), Pinecone uses API key
 
-**Scoped Policy (More Secure):**
+**Basic Policy:**
 
 ```json
 {
@@ -350,21 +349,9 @@ The initialization script will:
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": [
-        "bedrock:InvokeModel",
-        "bedrock:InvokeModelWithResponseStream"
-      ],
-      "Resource": [
-        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0",
-        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-embeddings-v1:0"
-      ]
-    },
-    {
-      "Effect": "Allow",
       "Action": ["rds:DescribeDBInstances", "rds:DescribeDBClusters"],
       "Resource": "*"
     },
-
     {
       "Effect": "Allow",
       "Action": [
@@ -468,7 +455,7 @@ curl -X POST http://localhost:8000/search \
 3. Configuration:
    - **Name**: `glance-backend`
    - **AMI**: Ubuntu Server 22.04 LTS (HVM)
-   - **Instance type**: t3.medium (2 vCPU, 4GB RAM)
+   - **Instance type**: t3.large (2 vCPU, 8GB RAM) for CPU OR g4dn.xlarge for GPU
    - **Key pair**: Create or select existing
    - **Network**: Default VPC
    - **Security group**: Create new
@@ -479,7 +466,7 @@ curl -X POST http://localhost:8000/search \
    | SSH | TCP | 22 | Your IP |
    | HTTP | TCP | 80 | 0.0.0.0/0 |
    | HTTPS | TCP | 443 | 0.0.0.0/0 |
-   | Custom TCP | TCP | 8000 | 0.0.0.0/0 (temporary) |
+   | Custom TCP | TCP | 8000-8002 | Your backend IP |
 
 5. Advanced details:
    - **IAM instance profile**: GlanceEC2Role
@@ -536,10 +523,6 @@ sudo apt install -y build-essential libpq-dev
 # Install nginx
 sudo apt install -y nginx
 
-# # Install CloudWatch agent (optional but recommended)
-# wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
-# sudo dpkg -i amazon-cloudwatch-agent.deb
-
 # Create app directory
 sudo mkdir -p /opt/glance
 sudo chown ubuntu:ubuntu /opt/glance
@@ -559,8 +542,42 @@ pip install -r requirements.txt
 # Create .env file (you'll need to edit this manually or use SSM Parameter Store)
 cp .env.example .env
 # IMPORTANT: Edit .env with your actual values
+# Set USE_VLLM=true and configure VLLM_BASE_URL
 
 # Initialize databases
+python scripts/init_db.py
+python scripts/init_pinecone.py
+```
+
+### 6.3 Install vLLM on EC2
+
+SSH into your EC2 instance and run:
+
+```bash
+# Clone your project (if not already done)
+git clone <your-repo>
+cd glance-aws
+
+# Run the setup script
+bash scripts/setup_vllm_ec2.sh
+
+# Start the vLLM services
+# For CPU (t3.large):
+cd ~ && ./start_vllm_text.sh   # Port 8001 - text embeddings
+cd ~ && ./start_vllm_image.sh  # Port 8002 - image embeddings
+
+# For GPU (g4dn.xlarge):
+cd ~ && ./start_vllm_vision.sh # Port 8000 - vision model
+```
+
+**Verify vLLM is running:**
+
+```bash
+# Check if services are running
+curl http://localhost:8000/v1/models  # For vision
+curl http://localhost:8001/v1/models  # For text embeddings
+curl http://localhost:8002/v1/models  # For image embeddings
+```
 python scripts/init_db.py
 python scripts/init_pinecone.py
 

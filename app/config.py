@@ -26,12 +26,31 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
     
+    # vLLM Configuration (for Qwen models on EC2)
+    VLLM_BASE_URL: str = "http://localhost:8000"
+    VLLM_API_KEY: str = "EMPTY"
+    VLLM_VISION_MODEL: str = "Qwen/Qwen2-VL-2B-Instruct"
+    
+    # Separate models for text and image embeddings (vLLM supports different model types)
+    VLLM_TEXT_EMBEDDING_MODEL: str = "intfloat/e5-small-v2"  # CPU-friendly text
+    VLLM_IMAGE_EMBEDDING_MODEL: str = "openai/clip-vit-large-patch14-336"  # CLIP for images
+    
+    # vLLM embedding dimensions
+    VLLM_EMBEDDING_DIMENSIONS: int = 384  # e5-small-v2 uses 384
+    
+    # Use vLLM instead of Bedrock (set to True if using EC2 with vLLM)
+    USE_VLLM: bool = False
+    
+    # vLLM embedding dimensions (e5-small-v2=384, Cohere=1024)
+    VLLM_EMBEDDING_DIMENSIONS: int = 384
+    
     # Bedrock Models
     BEDROCK_NOVA_LITE_MODEL_ID: str = "amazon.nova-lite-v1:0"
-    BEDROCK_EMBEDDING_MODEL_ID: str = "amazon.nova-embeddings-v1:0"
+    BEDROCK_EMBEDDING_MODEL_ID: str = "cohere.embed-v4:0"
     EMBEDDING_DIMENSIONS: int = 1024
     
     # RDS PostgreSQL
+
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
     DB_NAME: str = "glance_db"
